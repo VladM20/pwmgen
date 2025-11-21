@@ -10,7 +10,7 @@ module pwm_gen (
     input[15:0] compare2,
     input[15:0] count_val,
     // top facing signals
-    output pwm_out
+    output reg pwm_out
 );
 
     // Bit 0: Aliniere Stanga (0) / Dreapta (1)
@@ -28,7 +28,7 @@ module pwm_gen (
                 
                 // Aliniere Stânga (FUNCTIONS[0] = 0)
                 if (F_ALIGN_LR == 1'b0) begin
-                    // HIGH cât timp contorul este mai mic decât COMPARE1
+                    // HIGH cât timp contorul este mai mic decat COMPARE1
                     if (count_val < compare1)
                         pwm_out <= 1'b1;
                     else
