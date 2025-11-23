@@ -32,7 +32,7 @@ wire sclk_falling = (sclk_d1 == 1'b0) && (sclk_d2 == 1'b1); // sclk a fost 1 si 
 
 // --- Registre interne ---
 reg [2:0] bit_cnt;      // Contor pentru cei 8 biti (0-7)
-reg [7:0] shift_reg_rx; // Registru de deplasare pentru recep?ie (MOSI)
+reg [7:0] shift_reg_rx; // Registru de deplasare pentru receptie (MOSI)
 reg [7:0] shift_reg_tx; // Registru de deplasare pentru transmisie (MISO)
 
 always @(posedge clk or negedge rst_n) begin
