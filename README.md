@@ -4,83 +4,49 @@
 
 Această documentație descrie arhitectura și funcționarea sistemului PWM (Pulse Width Modulation) configurabil, controlat printr-o interfață serială SPI. Sistemul este compus din 6 module Verilog interconectate.
 
-## Arhitectură Generală
-
 ### 1. Modulul Principal: `top.v`
 Acesta este modulul de nivel superior (Top Level) care integrează toate sub-modulele și gestionează interconectarea semnalelor.
-
-* **Rol:** Realizează legătura dintre pinii fizici ai FPGA-ului/ASIC-ului și logica internă.
-* **Interfață:**
-    * **System:** `clk`, `rst_n`
-    * **SPI:** `sclk`, `cs_n`, `miso`, `mosi`
-    * **Output:** `pwm_out`
-* **Ierarhie:** Instanțiază `spi_bridge`, `instr_dcd`, `regs`, `counter` și `pwm_gen`.
 
 ---
 
 ## Module Funcționale
 
 ### 2. Interfața SPI: `spi_bridge.v`
-Acest modul acționează ca un **Slave SPI**, convertind semnalele seriale externe în date paralele pe 8 biți pentru uz intern.
 
+Modulul `spi_bridge.v` realizează adaptarea protocolului serial extern la magistrala internă paralelă, funcționând ca un slave sincronizat la ceasul sistemului. 
 
+Deoarece perifericul operează într-un domeniu de ceas de frecvență ridicată (100MHz), semnalul extern `sclk` nu este utilizat direct ca ceas, ci este eșantionat printr-un detector de fronturi cu dublu registru (`sclk_d1`/`sclk_d2`) pentru a elimina metastabilitatea și problemele de clock domain crossing. 
 
-* **Sincronizare:** Utilizează un mecanism de eșantionare dublă (`sclk_d1`, `sclk_d2`) pentru a detecta flancurile semnalului de ceas `sclk` și a le sincroniza cu ceasul sistemului (`clk`).
-* **Recepție (MOSI):** Datele sunt citite pe flancul **crescător** (rising edge) al `sclk` și stocate în registrul de deplasare `shift_reg_rx`.
-* **Transmisie (MISO):** Datele sunt schimbate pe linia de ieșire pe flancul **descrescător** (falling edge) al `sclk` din `shift_reg_tx`.
-* **Handshake:** Emite semnalul `byte_sync` (puls de un ciclu) atunci când un octet complet a fost transferat, validând datele pe `data_in`.
+Logica implementează modul SPI standard (CPOL=0, CPHA=0), deplasând datele de intrare (`mosi`) într-un registru de recepție pe frontul crescător al ceasului virtual și actualizând linia `miso` pe frontul descrescător. Un mecanism critic este generarea semnalului `byte_sync` la completarea fiecărui byte, moment în care registrul de transmisie este reîncărcat cu date noi (`data_out`) pentru a susține transferuri continue fără pauze. De asemenea, ieșirea `miso` este trecută în stare de înaltă impedanță atunci când semnalul `cs_n` este inactiv, permițând coexistența mai multor periferice pe aceeași magistrală.
 
 ### 3. Decodorul de Instrucțiuni: `instr_dcd.v`
-Interpretează pachetele de date primite și gestionează mașina de stări (FSM) pentru accesul la regiștri.
 
-* **Protocol:** Comunicarea se realizează în tranzacții de 2 octeți:
-    1.  **Byte 1 (Comandă & Adresă):**
-        * Bit [7]: Operație (0 = Read, 1 = Write).
-        * Biții [5:0]: Adresa registrului țintă.
-    2.  **Byte 2 (Date):**
-        * Write: Valoarea efectivă de scris.
-        * Read: Octet "dummy" (ignorat la recepție, folosit pentru a genera ceas pentru MISO).
-* **Control:** Activează semnalele `read` sau `write` către fișierul de regiștri doar când FSM-ul este în starea `STATE_DATA` și semnalul `byte_sync` este activ.
+Acest modul acționează ca unitate de control între interfața SPI și fișierul de registre, utilizând un automat cu stări finite (FSM) pentru a interpreta fluxul de date. Protocolul impune o structură de tranzacție pe doi octeți: faza de `SETUP`, în care primul byte este decodat pentru a extrage direcția transferului (Read/Write) și adresa țintă, urmată de faza `DATA`, unde are loc transferul efectiv al valorii. 
+
+Logica de generare a semnalelor de control `read` și `write` este strict condiționată de starea automatului și de impulsul de sincronizare `byte_sync`, garantând că accesul la registre se face doar atunci când datele sunt stabile și complete. Adresarea include un mecanism de calcul care combină biții primiți pentru a mapa corect cererile externe către spațiul de adrese fizic al perifericului, asigurând o decuplare logică între protocolul de comunicație și structura internă a memoriei.
 
 ### 4. Fișierul de Regiștri: `regs.v`
-Stochează configurația sistemului și face legătura între parametrii software și blocurile hardware (`counter`, `pwm_gen`).
 
-#### Harta Memoriei (Register Map)
+Acest modul implementează interfața de control dintre procesor și nucleul PWM, utilizând o arhitectură accesibilă pe 8 biți. 
 
-| Adresă | Nume Registru | Descriere | Acces |
-| :--- | :--- | :--- | :--- |
-| `0x00-0x01` | `period` | Perioada contorului (16 biți) | R/W |
-| `0x02` | `en` | Activare contor (Bit 0) | R/W |
-| `0x03-0x04` | `compare1` | Prag comparator 1 (16 biți) | R/W |
-| `0x05-0x06` | `compare2` | Prag comparator 2 (16 biți) | R/W |
-| `0x07` | `count_reset` | Resetare software contor (Declanșează puls intern) | **W** |
-| `0x08-0x09` | `counter_val` | Valoarea curentă a contorului (16 biți) | **R** |
-| `0x0A` | `prescale` | Divizor frecvență (Exponent) | R/W |
-| `0x0B` | `upnotdown` | Direcție: 1=Up, 0=Down | R/W |
-| `0x0C` | `pwm_en` | Activare ieșire PWM | R/W |
-| `0x0D` | `functions` | Configurare mod PWM (Biții 1:0) | R/W |
+Deoarece registrele de configurare critică (PERIOD, COMPARE1, COMPARE2) sunt pe 16 biți, acestea sunt mapate pe câte două adrese consecutive (LSB și MSB) pentru a permite accesul prin magistrala de date îngustă. Logica este strict sincronă, utilizând un singur bloc `always` și decodificare prin `case` pentru a asigura stabilitatea semnalelor și eliminarea condițiilor de cursă. 
+
+O funcționalitate specifică este implementată la adresa 0x07 (`COUNTER_RESET`), unde o operație de scriere declanșează un registru de deplasare intern ce generează un impuls de reset controlat, cu o durată fixă de două cicluri de ceas (self-clearing). Pentru protecția integrității datelor, scrierile în registrele read-only (ex. starea contorului) sunt ignorate, iar citirea adreselor neutilizate returnează implicit valoarea 0.
 
 ### 5. Contor Programabil: `counter.v`
-Un contor flexibil pe 16 biți care generează baza de timp.
 
-* **Prescaler:** Funcționează exponențial. Perioada unui "tick" de contor este calculată astfel:
-    $$T_{tick} = T_{clk} \times 2^{prescale}$$
-    *(Ex: prescale=0 -> 1 ciclu, prescale=2 -> 4 cicluri).*
-* **Direcție:** Controlată de `upnotdown`.
-    * **Up:** Numără 0 $\rightarrow$ `period` $\rightarrow$ 0.
-    * **Down:** Numără `period` $\rightarrow$ 0 $\rightarrow$ `period`.
-* **Priorități:** Resetul sincron (`count_reset`) are prioritate maximă, urmat de semnalul de enable (`en`).
+Acest modul implementează nucleul de numărare bidirecțional (Up/Down), având la bază un mecanism de prescalare exponențială ce generează tick-uri de incrementare la intervale de $2^{prescale}$ cicluri de ceas. 
+
+Pentru a susține divizorul maxim, se utilizează un contor intern pe 32 de biți, iar valoarea exponentului este limitată hardware la maximum 31 pentru a preveni comportamente nedefinite ale operației de deplasare. 
+
+Arhitectura asigură determinismul temporizării prin resetarea automată a prescalerului la dezactivarea semnalului de enable și tratează prioritar resetul sincron. Logica de tranziție gestionează explicit modurile de numărare (crescător vs. descrescător) și include protecții împotriva erorilor aritmetice (overflow/underflow) sau a configurațiilor invalide (perioadă nulă), garantând funcționarea robustă a generatorului PWM în orice regim.
 
 ### 6. Generator PWM: `pwm_gen.v`
 Generează semnalul `pwm_out` prin compararea valorii contorului (`count_val`) cu regiștrii `compare`.
 
+Modulul `pwm_gen.v` este responsabil pentru sinteza formei de undă PWM, comparând în timp real valoarea curentă a contorului cu pragurile configurate (`compare1`, `compare2`) și perioada totală. 
 
-
-#### Configurare prin registrul `functions`:
-Registrul `functions` determină modul de formare a undei:
-
-* **Bit 1 (Mode):** `0` = Aliniat, `1` = Nealiniat.
-* **Bit 0 (Align):** `0` = Stânga, `1` = Dreapta (valid doar în mod Aliniat).
+Funcționalitatea este dictată de registrul de configurare `functions`, care selectează între modurile Aliniat (Stânga/Dreapta) și Nealiniat. În modul standard (Left-Aligned), ieșirea este activă cât timp contorul este sub pragul `compare1`, în timp ce modul Right-Aligned inversează logica, activând semnalul în ultima porțiune a perioadei (`period - compare1`). Modul Nealiniat (sau "window mode") oferă flexibilitate maximă, generând un impuls activ strict în intervalul dintre `compare1` și `compare2`, permițând astfel controlul precis atât al factorului de umplere, cât și al fazei semnalului în raport cu ciclul de numărare.
 
 #### Moduri de Operare:
 
