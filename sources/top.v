@@ -50,13 +50,15 @@ spi_bridge i_spi_bridge (
     .sclk(sclk),
     .cs_n(cs_n),
     .miso(miso),
-    .mosi(mosi)
+    .mosi(mosi),
+    .data_in(data_in),
+    .data_out(data_out)
 );
 
 instr_dcd i_instr_dcd (
     .clk(clk),
     .rst_n(rst_n),
-    .byte_sync(),
+    .byte_sync(byte_sync),
     .data_in(data_in),
     .data_out(data_out),
     .read(read),
