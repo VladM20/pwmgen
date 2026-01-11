@@ -15,7 +15,7 @@ Acesta este modulul de nivel superior (Top Level) care integrează toate sub-mod
 
 Modulul `spi_bridge.v` realizează adaptarea protocolului serial extern la magistrala internă paralelă, funcționând ca un slave sincronizat la ceasul sistemului. 
 
-Deoarece perifericul operează într-un domeniu de ceas de frecvență ridicată (100MHz), semnalul extern `sclk` nu este utilizat direct ca ceas, ci este eșantionat printr-un detector de fronturi cu dublu registru (`sclk_d1`/`sclk_d2`) pentru a elimina metastabilitatea și problemele de clock domain crossing. 
+Semnalul extern `sclk` nu este utilizat direct ca ceas, ci este eșantionat printr-un detector de fronturi cu dublu registru (`sclk_d1`/`sclk_d2`) pentru a elimina metastabilitatea și problemele de clock domain crossing. 
 
 Logica implementează modul SPI standard (CPOL=0, CPHA=0), deplasând datele de intrare (`mosi`) într-un registru de recepție pe frontul crescător al ceasului virtual și actualizând linia `miso` pe frontul descrescător. Un mecanism critic este generarea semnalului `byte_sync` la completarea fiecărui byte, moment în care registrul de transmisie este reîncărcat cu date noi (`data_out`) pentru a susține transferuri continue fără pauze. De asemenea, ieșirea `miso` este trecută în stare de înaltă impedanță atunci când semnalul `cs_n` este inactiv, permițând coexistența mai multor periferice pe aceeași magistrală.
 
